@@ -21,10 +21,12 @@ def main():
         format="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
     )
 
+    config_manager = BluesoundConfigManager("bluesound")
+
     run_integration(
         driver=BluesoundDriver(),
-        setup_flow=BluesoundSetupFlow(),
-        config_manager=BluesoundConfigManager("bluesound"),
+        setup_flow=BluesoundSetupFlow(config_manager),
+        config_manager=config_manager,
     )
 
 
