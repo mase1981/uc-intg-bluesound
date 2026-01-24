@@ -35,7 +35,9 @@ class BluesoundDevice(PollingDevice):
         self._is_leader = False
         self._is_grouped = False
         self._group_name: str | None = None
-        self._pending_mute: bool | None = None  # Track pending mute state to avoid race condition
+        # Track pending states to avoid race condition during rapid button presses
+        self._pending_mute: bool | None = None
+        self._pending_volume: int | None = None
 
     @property
     def identifier(self) -> str:
@@ -83,6 +85,11 @@ class BluesoundDevice(PollingDevice):
             # Fetch both status and sync status
             status_changed = await self._fetch_status()
             sync_changed = await self._fetch_sync_status()
+
+            # Clear pending states after successful poll
+            if status_changed:
+                self._pending_mute = None
+                self._pending_volume = None
 
             # Emit update event if any state changed
             if status_changed or sync_changed:
@@ -425,14 +432,30 @@ class BluesoundDevice(PollingDevice):
     async def volume_up(self) -> bool:
         """Increase volume."""
         _LOG.info("[%s] Volume up", self.log_id)
-        current = int(self._state.get("volume", "50"))
-        return await self.set_volume(current + 1)
+
+        # Use pending volume if available (prevents race condition)
+        if self._pending_volume is not None:
+            current = self._pending_volume
+        else:
+            current = int(self._state.get("volume", "50"))
+
+        new_volume = min(100, current + 1)
+        self._pending_volume = new_volume
+        return await self.set_volume(new_volume)
 
     async def volume_down(self) -> bool:
         """Decrease volume."""
         _LOG.info("[%s] Volume down", self.log_id)
-        current = int(self._state.get("volume", "50"))
-        return await self.set_volume(current - 1)
+
+        # Use pending volume if available (prevents race condition)
+        if self._pending_volume is not None:
+            current = self._pending_volume
+        else:
+            current = int(self._state.get("volume", "50"))
+
+        new_volume = max(0, current - 1)
+        self._pending_volume = new_volume
+        return await self.set_volume(new_volume)
 
     async def mute(self, muted: bool) -> bool:
         """Set mute state."""
@@ -454,17 +477,8 @@ class BluesoundDevice(PollingDevice):
         new_mute = not current_mute
         self._pending_mute = new_mute
 
-        # Send command
-        result = await self.mute(new_mute)
-
-        # Clear pending state after a short delay (next poll should have updated)
-        asyncio.get_event_loop().call_later(2.0, self._clear_pending_mute)
-
-        return result
-
-    def _clear_pending_mute(self) -> None:
-        """Clear pending mute state."""
-        self._pending_mute = None
+        # Send command (pending state will be cleared on next successful poll)
+        return await self.mute(new_mute)
 
     async def set_shuffle(self, shuffle: bool) -> bool:
         """Set shuffle mode."""
