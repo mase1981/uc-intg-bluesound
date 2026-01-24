@@ -35,6 +35,7 @@ class BluesoundDevice(PollingDevice):
         self._is_leader = False
         self._is_grouped = False
         self._group_name: str | None = None
+        self._pending_mute: bool | None = None  # Track pending mute state to avoid race condition
 
     @property
     def identifier(self) -> str:
@@ -441,8 +442,29 @@ class BluesoundDevice(PollingDevice):
     async def mute_toggle(self) -> bool:
         """Toggle mute."""
         _LOG.info("[%s] Mute toggle", self.log_id)
-        current_mute = self._state.get("mute", "0") == "1"
-        return await self.mute(not current_mute)
+
+        # Use pending mute state if available (prevents race condition)
+        # Otherwise use current state from device
+        if self._pending_mute is not None:
+            current_mute = self._pending_mute
+        else:
+            current_mute = self._state.get("mute", "0") == "1"
+
+        # Calculate new state and track it
+        new_mute = not current_mute
+        self._pending_mute = new_mute
+
+        # Send command
+        result = await self.mute(new_mute)
+
+        # Clear pending state after a short delay (next poll should have updated)
+        asyncio.get_event_loop().call_later(2.0, self._clear_pending_mute)
+
+        return result
+
+    def _clear_pending_mute(self) -> None:
+        """Clear pending mute state."""
+        self._pending_mute = None
 
     async def set_shuffle(self, shuffle: bool) -> bool:
         """Set shuffle mode."""
