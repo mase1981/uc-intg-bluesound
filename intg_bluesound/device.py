@@ -9,6 +9,7 @@ import asyncio
 import logging
 from typing import Any
 from xml.etree import ElementTree as ET
+from time import time
 import aiohttp
 from ucapi_framework import PollingDevice, DeviceEvents
 from ucapi.media_player import Attributes as MediaAttributes, States as MediaStates
@@ -44,6 +45,9 @@ class BluesoundDevice(PollingDevice):
         # Track target volume/mute for rapid button presses
         self._target_volume: int | None = None
         self._target_mute: bool | None = None
+        # Volume debouncing to prevent display jumping
+        self._last_volume_update: tuple[int, float] | None = None
+        self._volume_debounce_ms = 100
 
     @property
     def identifier(self) -> str:
@@ -348,6 +352,23 @@ class BluesoundDevice(PollingDevice):
         mute = self._state.get("mute", "0") == "1"
         shuffle = self._state.get("shuffle", "0") == "1"
         repeat = self._state.get("repeat", "0")
+
+        # Volume debouncing: ignore duplicate volume updates within debounce window
+        current_time = time()
+        if self._last_volume_update is not None:
+            last_vol, last_time = self._last_volume_update
+            time_diff_ms = (current_time - last_time) * 1000
+
+            if last_vol == volume and time_diff_ms < self._volume_debounce_ms:
+                _LOG.debug(
+                    "[%s] Ignoring duplicate volume %d%% (within %dms)",
+                    self.log_id,
+                    volume,
+                    self._volume_debounce_ms
+                )
+                return
+
+        self._last_volume_update = (volume, current_time)
 
         # Map repeat: 0=off, 1=all, 2=one
         repeat_mode = "OFF"
