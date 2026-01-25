@@ -15,6 +15,7 @@ from ucapi.media_player import Attributes as MediaAttributes, States as MediaSta
 from ucapi.sensor import Attributes as SensorAttributes
 from ucapi.remote import Attributes as RemoteAttributes
 from intg_bluesound.config import BluesoundConfig
+from asyncio import Queue
 
 _LOG = logging.getLogger(__name__)
 
@@ -35,9 +36,14 @@ class BluesoundDevice(PollingDevice):
         self._is_leader = False
         self._is_grouped = False
         self._group_name: str | None = None
-        # Track pending states to avoid race condition during rapid button presses
-        self._pending_mute: bool | None = None
-        self._pending_volume: int | None = None
+        # Command queue for volume/mute to handle rapid button presses
+        self._volume_queue: Queue = Queue()
+        self._mute_queue: Queue = Queue()
+        self._volume_worker_task: asyncio.Task | None = None
+        self._mute_worker_task: asyncio.Task | None = None
+        # Track target volume/mute for rapid button presses
+        self._target_volume: int | None = None
+        self._target_mute: bool | None = None
 
     @property
     def identifier(self) -> str:
@@ -67,6 +73,11 @@ class BluesoundDevice(PollingDevice):
         try:
             await self._fetch_status()
             await self._fetch_sync_status()
+
+            # Start command queue workers
+            self._volume_worker_task = asyncio.create_task(self._volume_worker())
+            self._mute_worker_task = asyncio.create_task(self._mute_worker())
+
             _LOG.info("[%s] Connection established successfully", self.log_id)
         except Exception as err:
             _LOG.error("[%s] Failed to establish connection: %s", self.log_id, err)
@@ -86,11 +97,6 @@ class BluesoundDevice(PollingDevice):
             status_changed = await self._fetch_status()
             sync_changed = await self._fetch_sync_status()
 
-            # Clear pending states after successful poll
-            if status_changed:
-                self._pending_mute = None
-                self._pending_volume = None
-
             # Emit update event if any state changed
             if status_changed or sync_changed:
                 self._emit_update()
@@ -98,9 +104,87 @@ class BluesoundDevice(PollingDevice):
         except Exception as err:  # pylint: disable=broad-exception-caught
             _LOG.error("[%s] Poll error: %s", self.log_id, err)
 
+    async def _volume_worker(self) -> None:
+        """Process volume commands from queue sequentially."""
+        _LOG.debug("[%s] Volume worker started", self.log_id)
+        while True:
+            try:
+                volume = await self._volume_queue.get()
+                if volume is None:  # Shutdown signal
+                    break
+
+                # Send volume command and wait for response
+                await self._send_command("Volume", {"level": str(volume)})
+
+                # Small delay to let device process command
+                await asyncio.sleep(0.1)
+
+                self._volume_queue.task_done()
+
+                # Clear target volume when queue is empty
+                if self._volume_queue.empty():
+                    self._target_volume = None
+
+            except asyncio.CancelledError:
+                break
+            except Exception as err:  # pylint: disable=broad-exception-caught
+                _LOG.error("[%s] Volume worker error: %s", self.log_id, err)
+                self._volume_queue.task_done()
+
+        _LOG.debug("[%s] Volume worker stopped", self.log_id)
+
+    async def _mute_worker(self) -> None:
+        """Process mute commands from queue sequentially."""
+        _LOG.debug("[%s] Mute worker started", self.log_id)
+        while True:
+            try:
+                mute_value = await self._mute_queue.get()
+                if mute_value is None:  # Shutdown signal
+                    break
+
+                # Send mute command and wait for response
+                await self._send_command("Volume", {"mute": "1" if mute_value else "0"})
+
+                # Small delay to let device process command
+                await asyncio.sleep(0.1)
+
+                self._mute_queue.task_done()
+
+                # Clear target mute when queue is empty
+                if self._mute_queue.empty():
+                    self._target_mute = None
+
+            except asyncio.CancelledError:
+                break
+            except Exception as err:  # pylint: disable=broad-exception-caught
+                _LOG.error("[%s] Mute worker error: %s", self.log_id, err)
+                self._mute_queue.task_done()
+
+        _LOG.debug("[%s] Mute worker stopped", self.log_id)
+
     async def disconnect(self) -> None:
         """Disconnect and cleanup."""
         await super().disconnect()
+
+        # Stop worker tasks
+        if self._volume_worker_task:
+            await self._volume_queue.put(None)  # Shutdown signal
+            self._volume_worker_task.cancel()
+            try:
+                await self._volume_worker_task
+            except asyncio.CancelledError:
+                pass
+            self._volume_worker_task = None
+
+        if self._mute_worker_task:
+            await self._mute_queue.put(None)  # Shutdown signal
+            self._mute_worker_task.cancel()
+            try:
+                await self._mute_worker_task
+            except asyncio.CancelledError:
+                pass
+            self._mute_worker_task = None
+
         if self._session:
             await self._session.close()
             self._session = None
@@ -427,57 +511,71 @@ class BluesoundDevice(PollingDevice):
         """Set volume level (0-100)."""
         volume = max(0, min(100, volume))
         _LOG.info("[%s] Setting volume to %d", self.log_id, volume)
-        return await self._send_command("Volume", {"level": str(volume)})
+
+        # Queue volume command for sequential processing
+        try:
+            await self._volume_queue.put(volume)
+            return True
+        except Exception as err:  # pylint: disable=broad-exception-caught
+            _LOG.error("[%s] Failed to queue volume command: %s", self.log_id, err)
+            return False
 
     async def volume_up(self) -> bool:
         """Increase volume."""
         _LOG.info("[%s] Volume up", self.log_id)
 
-        # Use pending volume if available (prevents race condition)
-        if self._pending_volume is not None:
-            current = self._pending_volume
+        # Use target volume if set (during rapid presses), otherwise use current state
+        if self._target_volume is not None:
+            current = self._target_volume
         else:
             current = int(self._state.get("volume", "50"))
 
         new_volume = min(100, current + 1)
-        self._pending_volume = new_volume
+        self._target_volume = new_volume
+
         return await self.set_volume(new_volume)
 
     async def volume_down(self) -> bool:
         """Decrease volume."""
         _LOG.info("[%s] Volume down", self.log_id)
 
-        # Use pending volume if available (prevents race condition)
-        if self._pending_volume is not None:
-            current = self._pending_volume
+        # Use target volume if set (during rapid presses), otherwise use current state
+        if self._target_volume is not None:
+            current = self._target_volume
         else:
             current = int(self._state.get("volume", "50"))
 
         new_volume = max(0, current - 1)
-        self._pending_volume = new_volume
+        self._target_volume = new_volume
+
         return await self.set_volume(new_volume)
 
     async def mute(self, muted: bool) -> bool:
         """Set mute state."""
         _LOG.info("[%s] Setting mute to %s", self.log_id, muted)
-        return await self._send_command("Volume", {"mute": "1" if muted else "0"})
+
+        # Queue mute command for sequential processing
+        try:
+            await self._mute_queue.put(muted)
+            return True
+        except Exception as err:  # pylint: disable=broad-exception-caught
+            _LOG.error("[%s] Failed to queue mute command: %s", self.log_id, err)
+            return False
 
     async def mute_toggle(self) -> bool:
         """Toggle mute."""
         _LOG.info("[%s] Mute toggle", self.log_id)
 
-        # Use pending mute state if available (prevents race condition)
-        # Otherwise use current state from device
-        if self._pending_mute is not None:
-            current_mute = self._pending_mute
+        # Use target mute if set (during rapid presses), otherwise use current state
+        if self._target_mute is not None:
+            current_mute = self._target_mute
         else:
             current_mute = self._state.get("mute", "0") == "1"
 
         # Calculate new state and track it
         new_mute = not current_mute
-        self._pending_mute = new_mute
+        self._target_mute = new_mute
 
-        # Send command (pending state will be cleared on next successful poll)
         return await self.mute(new_mute)
 
     async def set_shuffle(self, shuffle: bool) -> bool:
