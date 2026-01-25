@@ -97,6 +97,19 @@ class BluesoundDevice(PollingDevice):
             status_changed = await self._fetch_status()
             sync_changed = await self._fetch_sync_status()
 
+            # Clear target states when device state has caught up
+            if status_changed:
+                current_volume = int(self._state.get("volume", "50"))
+                current_mute = self._state.get("mute", "0") == "1"
+
+                # Clear target volume if it matches actual device state
+                if self._target_volume is not None and current_volume == self._target_volume:
+                    self._target_volume = None
+
+                # Clear target mute if it matches actual device state
+                if self._target_mute is not None and current_mute == self._target_mute:
+                    self._target_mute = None
+
             # Emit update event if any state changed
             if status_changed or sync_changed:
                 self._emit_update()
@@ -120,10 +133,6 @@ class BluesoundDevice(PollingDevice):
                 await asyncio.sleep(0.1)
 
                 self._volume_queue.task_done()
-
-                # Clear target volume when queue is empty
-                if self._volume_queue.empty():
-                    self._target_volume = None
 
             except asyncio.CancelledError:
                 break
@@ -149,10 +158,6 @@ class BluesoundDevice(PollingDevice):
                 await asyncio.sleep(0.1)
 
                 self._mute_queue.task_done()
-
-                # Clear target mute when queue is empty
-                if self._mute_queue.empty():
-                    self._target_mute = None
 
             except asyncio.CancelledError:
                 break
