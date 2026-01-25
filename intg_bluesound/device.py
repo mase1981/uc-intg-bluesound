@@ -48,6 +48,8 @@ class BluesoundDevice(PollingDevice):
         # Volume debouncing to prevent display jumping
         self._last_volume_update: tuple[int, float] | None = None
         self._volume_debounce_ms = 100
+        # Store volume before mute for restoration
+        self._volume_before_mute: int | None = None
 
     @property
     def identifier(self) -> str:
@@ -550,11 +552,23 @@ class BluesoundDevice(PollingDevice):
         """Increase volume."""
         _LOG.info("[%s] Volume up", self.log_id)
 
+        # Automatically unmute when volume is adjusted
+        current_mute = self._state.get("mute", "0") == "1"
+        if current_mute or self._target_mute is True:
+            _LOG.debug("[%s] Auto-unmuting due to volume change", self.log_id)
+            await self.mute(False)
+
         # Use target volume if set (during rapid presses), otherwise use current state
         if self._target_volume is not None:
             current = self._target_volume
         else:
-            current = int(self._state.get("volume", "50"))
+            # If we have a stored pre-mute volume and current is 0 (muted), restore from storage
+            current_vol = int(self._state.get("volume", "50"))
+            if current_vol == 0 and self._volume_before_mute is not None:
+                current = self._volume_before_mute
+                _LOG.debug("[%s] Restoring from pre-mute volume %d", self.log_id, current)
+            else:
+                current = current_vol
 
         new_volume = min(100, current + 1)
         self._target_volume = new_volume
@@ -565,11 +579,23 @@ class BluesoundDevice(PollingDevice):
         """Decrease volume."""
         _LOG.info("[%s] Volume down", self.log_id)
 
+        # Automatically unmute when volume is adjusted
+        current_mute = self._state.get("mute", "0") == "1"
+        if current_mute or self._target_mute is True:
+            _LOG.debug("[%s] Auto-unmuting due to volume change", self.log_id)
+            await self.mute(False)
+
         # Use target volume if set (during rapid presses), otherwise use current state
         if self._target_volume is not None:
             current = self._target_volume
         else:
-            current = int(self._state.get("volume", "50"))
+            # If we have a stored pre-mute volume and current is 0 (muted), restore from storage
+            current_vol = int(self._state.get("volume", "50"))
+            if current_vol == 0 and self._volume_before_mute is not None:
+                current = self._volume_before_mute
+                _LOG.debug("[%s] Restoring from pre-mute volume %d", self.log_id, current)
+            else:
+                current = current_vol
 
         new_volume = max(0, current - 1)
         self._target_volume = new_volume
@@ -579,6 +605,17 @@ class BluesoundDevice(PollingDevice):
     async def mute(self, muted: bool) -> bool:
         """Set mute state."""
         _LOG.info("[%s] Setting mute to %s", self.log_id, muted)
+
+        # Store current volume before muting
+        if muted and self._volume_before_mute is None:
+            current_vol = int(self._state.get("volume", "50"))
+            if current_vol > 0:  # Only store if volume is non-zero
+                self._volume_before_mute = current_vol
+                _LOG.debug("[%s] Stored volume %d before mute", self.log_id, current_vol)
+
+        # Clear stored volume when unmuting
+        if not muted:
+            self._volume_before_mute = None
 
         # Queue mute command for sequential processing
         try:
