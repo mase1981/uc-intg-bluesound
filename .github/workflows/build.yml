@@ -35,7 +35,6 @@ jobs:
         run: |
           sudo apt-get update && sudo apt-get install -y qemu-system-arm binfmt-support qemu-user-static
           docker run --rm --privileged multiarch/qemu-user-static --reset -p yes
-          echo "Starting pyinstaller build for driver_id: ${DRIVER_ID}"
           docker run --rm --name builder \
             --platform=linux/arm64 \
             --user=$(id -u):$(id -g) \
@@ -49,13 +48,17 @@ jobs:
                 --collect-all zeroconf \
                 --collect-all ucapi \
                 --collect-all ucapi_framework \
-                --hidden-import intg_${INTG_NAME}.driver \
-                --hidden-import intg_${INTG_NAME}.device \
-                --hidden-import intg_${INTG_NAME}.config \
-                --hidden-import intg_${INTG_NAME}.media_player \
-                --hidden-import intg_${INTG_NAME}.setup_flow \
+                --hidden-import uc_intg_${INTG_NAME}.driver \
+                --hidden-import uc_intg_${INTG_NAME}.device \
+                --hidden-import uc_intg_${INTG_NAME}.config \
+                --hidden-import uc_intg_${INTG_NAME}.media_player \
+                --hidden-import uc_intg_${INTG_NAME}.remote \
+                --hidden-import uc_intg_${INTG_NAME}.sensor \
+                --hidden-import uc_intg_${INTG_NAME}.select \
+                --hidden-import uc_intg_${INTG_NAME}.browser \
+                --hidden-import uc_intg_${INTG_NAME}.setup_flow \
                 --paths . \
-                intg_${INTG_NAME}/__init__.py"
+                uc_intg_${INTG_NAME}/__init__.py"
 
       - name: Prepare artifacts
         shell: bash
@@ -64,16 +67,11 @@ jobs:
           mv dist/driver/* artifacts/bin/
           cp driver.json artifacts/
           echo "ARTIFACT_NAME=uc-intg-${{ env.DRIVER_ID }}-${{ env.VERSION }}-aarch64" >> $GITHUB_ENV
-          echo "=== Artifact structure ==="
-          ls -laR artifacts/
 
       - name: Create upload artifact archive
         shell: bash
         run: |
           tar czvf ${{ env.ARTIFACT_NAME }}.tar.gz -C ${GITHUB_WORKSPACE}/artifacts .
-          echo "=== Archive contents ==="
-          tar tzvf ${{ env.ARTIFACT_NAME }}.tar.gz
-          ls -lah ${{ env.ARTIFACT_NAME }}.tar.gz
 
       - uses: actions/upload-artifact@v4
         id: upload_artifact
@@ -135,7 +133,6 @@ jobs:
 
       - name: Extract build archives from downloaded files
         run: |
-          ls -R
           for D in *; do
             if [ -d "${D}" ]; then
               mv "${D}"/* ./

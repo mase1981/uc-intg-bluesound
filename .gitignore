@@ -1,0 +1,28 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+build/
+dist/
+*.spec
+*.tar.gz
+*.egg-info/
+config.json
+*.log
+.idea/
+.DS_Store
+
+# Old package (replaced by uc_intg_bluesound)
+intg_bluesound/
+
+# Testing files (local only, never push)
+tests/
+simulator/
+
+# Claude (local only)
+.claude/
+knowledge-base/
+*.knowledge.md
+
+# VS Code
+.vscode/

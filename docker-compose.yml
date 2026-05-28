@@ -7,9 +7,9 @@ services:
       dockerfile: Dockerfile
     container_name: uc-intg-bluesound
     restart: unless-stopped
-    network_mode: host  # Required for device discovery
+    network_mode: host
     volumes:
-      - ./data:/data  # Persistent configuration storage
+      - ./data:/data
     environment:
       - UC_CONFIG_HOME=/data
       - UC_INTEGRATION_INTERFACE=0.0.0.0

@@ -1,20 +1,21 @@
 {
   "driver_id": "bluesound",
-  "version": "1.0.9",
+  "version": "2.0.0",
   "min_core_api": "0.22.0",
   "name": {
     "en": "Bluesound"
   },
   "icon": "uc:speaker",
   "description": {
-    "en": "Integration for Bluesound BluOS music streamers and wireless speakers with full media player support"
+    "en": "Integration for Bluesound BluOS music streamers and wireless speakers with media browser, presets, and multi-room support"
   },
   "developer": {
     "name": "Meir Miyara",
-    "email": "meir.miyara@gmail.com"
+    "email": "meir.miyara@gmail.com",
+    "url": "https://github.com/mase1981"
   },
   "home_page": "https://github.com/mase1981/uc-intg-bluesound",
-  "release_date": "2026-01-24",
+  "release_date": "2026-05-28",
   "setup_data_schema": {
     "title": {
       "en": "Bluesound Setup"
@@ -28,7 +29,7 @@
         "field": {
           "label": {
             "value": {
-              "en": "Enter your Bluesound player IP address. The integration connects via the BluOS API to provide full control of your music player. Supports Bluesound, NAD Electronics, and DALI speakers."
+              "en": "Enter your Bluesound player IP address on the next screen. Supports Bluesound, NAD Electronics, and DALI speakers running BluOS."
             }
           }
         }

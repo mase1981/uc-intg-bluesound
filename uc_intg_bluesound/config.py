@@ -1,0 +1,23 @@
+"""
+Bluesound configuration for Unfolded Circle integration.
+
+:copyright: (c) 2026 by Meir Miyara.
+:license: MPL-2.0, see LICENSE for more details.
+"""
+
+from dataclasses import dataclass, field
+from ucapi_framework import BaseConfigManager
+
+
+@dataclass
+class BluesoundConfig:
+    """Bluesound player configuration."""
+
+    identifier: str = ""
+    name: str = ""
+    host: str = ""
+    port: int = 11000
+
+
+class BluesoundConfigManager(BaseConfigManager[BluesoundConfig]):
+    pass
