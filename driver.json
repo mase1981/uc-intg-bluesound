@@ -1,6 +1,6 @@
 {
   "driver_id": "bluesound",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "min_core_api": "0.22.0",
   "name": {
     "en": "Bluesound"
@@ -15,7 +15,7 @@
     "url": "https://github.com/mase1981"
   },
   "home_page": "https://github.com/mase1981/uc-intg-bluesound",
-  "release_date": "2026-05-28",
+  "release_date": "2026-06-06",
   "setup_data_schema": {
     "title": {
       "en": "Bluesound Setup"

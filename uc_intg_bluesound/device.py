@@ -213,15 +213,18 @@ class BluesoundDevice(PollingDevice):
         raw_mute = self._raw_state.get("mute", "0") == "1"
 
         current_time = time()
+        update_volume = True
         if self._last_volume_update is not None:
             last_vol, last_time = self._last_volume_update
             time_diff_ms = (current_time - last_time) * 1000
             if last_vol == raw_volume and time_diff_ms < self._volume_debounce_ms:
-                return
-        self._last_volume_update = (raw_volume, current_time)
+                update_volume = False
 
-        self._volume = raw_volume
-        self._muted = raw_mute
+        if update_volume:
+            self._last_volume_update = (raw_volume, current_time)
+            self._volume = raw_volume
+            self._muted = raw_mute
+
         self._shuffle = self._raw_state.get("shuffle", "0") == "1"
 
         repeat_val = self._raw_state.get("repeat", "0")
@@ -345,7 +348,6 @@ class BluesoundDevice(PollingDevice):
 
     async def disconnect(self) -> None:
         if self._volume_worker_task:
-            await self._volume_queue.put(None)
             self._volume_worker_task.cancel()
             try:
                 await self._volume_worker_task
@@ -354,13 +356,20 @@ class BluesoundDevice(PollingDevice):
             self._volume_worker_task = None
 
         if self._mute_worker_task:
-            await self._mute_queue.put(None)
             self._mute_worker_task.cancel()
             try:
                 await self._mute_worker_task
             except asyncio.CancelledError:
                 pass
             self._mute_worker_task = None
+
+        self._volume_queue = asyncio.Queue()
+        self._mute_queue = asyncio.Queue()
+        self._target_volume = None
+        self._target_mute = None
+        self._last_volume_update = None
+        self._volume_before_mute = None
+        self._etag = None
 
         if self._session:
             await self._session.close()
@@ -375,8 +384,20 @@ class BluesoundDevice(PollingDevice):
                 volume = await self._volume_queue.get()
                 if volume is None:
                     break
+                while not self._volume_queue.empty():
+                    try:
+                        next_vol = self._volume_queue.get_nowait()
+                        self._volume_queue.task_done()
+                        if next_vol is None:
+                            volume = None
+                            break
+                        volume = next_vol
+                    except asyncio.QueueEmpty:
+                        break
+                if volume is None:
+                    break
                 await self._send_command("Volume", {"level": str(volume)})
-                await asyncio.sleep(0.1)
+                await asyncio.sleep(0.05)
                 self._volume_queue.task_done()
             except asyncio.CancelledError:
                 break
@@ -390,8 +411,20 @@ class BluesoundDevice(PollingDevice):
                 mute_value = await self._mute_queue.get()
                 if mute_value is None:
                     break
+                while not self._mute_queue.empty():
+                    try:
+                        next_mute = self._mute_queue.get_nowait()
+                        self._mute_queue.task_done()
+                        if next_mute is None:
+                            mute_value = None
+                            break
+                        mute_value = next_mute
+                    except asyncio.QueueEmpty:
+                        break
+                if mute_value is None:
+                    break
                 await self._send_command("Volume", {"mute": "1" if mute_value else "0"})
-                await asyncio.sleep(0.1)
+                await asyncio.sleep(0.05)
                 self._mute_queue.task_done()
             except asyncio.CancelledError:
                 break
